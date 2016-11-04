@@ -1,0 +1,122 @@
+model {
+#PRIORS
+ag_mu    ~  dunif(0.5,3)
+ag_sd    ~  dunif(0.001,5)
+ag_tau   <- pow(ag_sd,-2) # As required when drawing from a normal distribution in JAGS, standard deviations were transformed to precision values, by dividing 1 by the squared standard deviation value.
+etag_mu  ~  dunif(-5,5) 
+etag_sd  ~  dunif(0.001,5)
+etag_tau <- pow(etag_sd,-2)
+ig_mu    ~  dunif(-0.5,0.5)
+ig_sd    ~  dunif(0.001,5)
+ig_tau   <- pow(ig_sd,-2)
+mg_mu    ~  dunif(0,10)
+mg_sd    ~  dunif(0.001,5)
+mg_tau   <- pow(mg_sd,-2)
+tg_mu    ~  dunif(0.05,1)
+tg_sd    ~  dunif(0.001,5)
+tg_tau   <- pow(tg_sd,-2)
+#Priors for effects of medication
+mag_mu    ~  dunif(-0.5,0.5)
+mag_sd    ~  dunif(0.001,5)
+mag_tau   <- pow(mag_sd,-2) 
+metag_mu  ~  dunif(-5,5) 
+metag_sd  ~  dunif(0.001,5)
+metag_tau <- pow(metag_sd,-2)
+mig_mu    ~  dunif(-0.5,0.5)
+mig_sd    ~  dunif(0.001,5)
+mig_tau   <- pow(mig_sd,-2)
+mmg_mu    ~  dunif(-2.5,2.5)
+mmg_sd    ~  dunif(0.001,5)
+mmg_tau   <- pow(mmg_sd,-2)
+mtg_mu    ~  dunif(-0.5,0.5)
+mtg_sd    ~  dunif(0.001,5)
+mtg_tau   <- pow(mtg_sd,-2)  
+#GROUP PARAMETERS
+for (v in 1:2) {
+     etag[v]     ~  dnorm(etag_mu,etag_tau)
+     eta_sd[v]   ~  dunif(0.001, 5)
+     eta_tau[v]  <- pow(eta_sd[v],-2)
+}
+ag      ~  dnorm(ag_mu,ag_tau)
+a_sd    ~  dunif(0.001, 5)
+a_tau   <- pow(a_sd,-2) 
+ig      ~  dnorm(ig_mu,ig_tau)
+i_sd    ~  dunif(0.001, 5)
+i_tau   <- pow(i_sd,-2)
+mg      ~  dnorm(mg_mu,mg_tau)
+m_sd    ~  dunif(0.001, 5)
+m_tau   <- pow(m_sd,-2)
+tg      ~  dnorm(tg_mu,tg_tau)
+t_sd    ~  dunif(0.001, 5)
+t_tau   <- pow(t_sd,-2)
+#Group parameters for effects of medication
+for (v in 1:2) {
+     metag[v]    ~  dnorm(metag_mu,metag_tau)
+     meta_sd[v]  ~  dunif(0.001, 5)
+     meta_tau[v] <- pow(meta_sd[v],-2)
+}
+mag      ~  dnorm(mag_mu,mag_tau)
+ma_sd    ~  dunif(0.001, 5)
+ma_tau   <- pow(ma_sd,-2) 
+mig      ~  dnorm(mig_mu,mig_tau)
+mi_sd    ~  dunif(0.001, 5) 
+mi_tau   <- pow(mi_sd,-2)
+mmg      ~  dnorm(mmg_mu,mmg_tau)
+mm_sd    ~  dunif(0.001, 5)
+mm_tau   <- pow(mm_sd,-2)
+mtg      ~  dnorm(mtg_mu,mtg_tau)
+mt_sd    ~  dunif(0.001, 5)
+mt_tau   <- pow(mt_sd,-2)
+#SUBJECT PARAMETERS
+for (s in 1:S) {
+     for (v in 1:2) {
+          eta[s,v]  ~ dnorm(etag[v],eta_tau[v])
+          meta[s,v] ~ dnorm(metag[v],meta_tau[v])
+     }
+     a[s]   ~ dnorm(ag,a_tau)
+     i[s]   ~ dnorm(ig,i_tau)
+     m[s]   ~ dnorm(mg,m_tau)
+     t[s]   ~ dnorm(tg,t_tau)
+     #Subject parameters for effect of medication
+     ma[s]   ~ dnorm(mag,ma_tau)
+     mi[s]   ~ dnorm(mig,mi_tau)
+     mm[s]   ~ dnorm(mmg,mm_tau)
+     mt[s]   ~ dnorm(mtg,mt_tau)
+}
+#Loop through trials for each group and subject
+for (g in 1:G) {
+     for (s in 1:S) {
+          #Assign starting values to ev[group,trial,stimulus pair,option]. 
+          #'first' is a two-dimensional-array identifying first trial for each subject in each group.
+          for (stim_pair in 1:3) {
+               ev[g,first[s,g],stim_pair,1] <- 0
+               ev[g,first[s,g],stim_pair,2] <- 0
+          }
+          #Run through trials
+          #'last' is a two-dimensional-array identifying last trial for each subject in each group.
+          for (trial in (first[s,g]):(last[s,g]-1)) {  
+               #Calculate drift rate parameter as ev-delta multiplited by m
+               v[trial] <- (ev[g,trial,pair[trial],1] - ev[g,trial,pair[trial],2]) * (m[s] + (dmed[trial] * mm[s]))
+        
+                #Estimate likelihood of choice's response time with dwiener. save log_likelihood for LOO
+# The JAGS Wiener module differentiates choices toward upper and lower boundary by the sign of the RT. Therefore, the RT of all choices in favor the suboptimal options (B, D and F) are set to be negative by multiplying the original RT with -1.
+               RT[trial] ~ dwiener((a[s] + (dmed[trial] * ma[s])) * pow(iter[trial]/10,i[s] + (dmed[trial] * mi[s])),t[s] + (dmed[trial] * mt[s]),0.5,v[trial])
+	log_lik[trial] <- logdensity.wiener(RT[trial], (a[s] + (dmed[trial] * ma[s])) * pow(iter[trial]/10,i[s] + (dmed[trial] * mi[s])),t[s] + (dmed[trial] * mt[s]),0.5,v[trial])
+        
+	#Update ev-values for next trial. 'pair' identifies the stimulus pair in the current trial. 'not1' and 'not2' identifies the other stimulus pairs.
+       	ev[g,trial+1,pair[trial],choice[trial]] <- ev[g,trial,pair[trial],choice[trial]] + 	 ilogit(eta[s,valence[trial]] + (dmed[trial] * meta[s,valence[trial]])) * (value[trial]-ev[g,trial,pair[trial],choice[trial]])
+	ev[g,trial+1,pair[trial],nonchoice[trial]] <- ev[g,trial,pair[trial],nonchoice[trial]] 
+	ev[g,trial+1,not1[trial],1] <- ev[g,trial,not1[trial],1] 
+	ev[g,trial+1,not1[trial],2] <- ev[g,trial,not1[trial],2] 
+	ev[g,trial+1,not2[trial],1] <- ev[g,trial,not2[trial],1] 
+	ev[g,trial+1,not2[trial],2] <- ev[g,trial,not2[trial],2] 
+          }
+          #EV-values are not updated in last trial
+          for (trial in last[s,g]) {
+	v[trial] <- (ev[g,trial,pair[trial],1] - ev[g,trial,pair[trial],2]) * (m[s] + (dmed[trial] * mm[s]))
+	RT[trial] ~ dwiener((a[s] + (dmed[trial] * ma[s])) * pow(iter[trial]/10,i[s] + (dmed[trial] * mi[s])),t[s] + (dmed[trial] * mt[s]),0.5,v[trial])
+	log_lik[trial] <- logdensity.wiener(RT[trial], (a[s] + (dmed[trial] * ma[s])) * pow(iter[trial]/10,i[s] + (dmed[trial] * mi[s])),t[s] + (dmed[trial] * mt[s]),0.5,v[trial])
+          }
+     }
+}
+}
